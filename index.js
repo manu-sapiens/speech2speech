@@ -77,6 +77,15 @@ app.post('/api/transcribe', upload.single('audio'), async (req, res) => {
     // Extract transcription from response
     const transcription = transcriptionResponse.data.text;
 
+    // Check if transcription is empty or contains only whitespace
+    if (!transcription || transcription.trim() === '') {
+      return res.json({
+        transcription: '',
+        response: 'No speech detected.',
+        audioUrl: null
+      });
+    }
+
     // Call OpenAI API with GPT-4o-mini model
     const completion = await openai.chat.completions.create({
       model: "gpt-4o-mini",

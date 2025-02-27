@@ -46,6 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
   // Audio recording variables
   let mediaRecorder;
   let audioChunks = [];
+  let isListening = false;
   let isRecording = false;
   let audioContext;
   let analyser;
@@ -55,9 +56,12 @@ document.addEventListener('DOMContentLoaded', () => {
   let silenceTimer;
   let audioDetectionTimeout;
   let recordingTimeout;
+  let audioStream;
+  let speechStartTime = null;
+  let minSpeechDuration = 500; // Minimum speech duration in ms to be considered valid
   
   // Constants for audio detection
-  const SILENCE_THRESHOLD = 0.01; // Adjust based on testing
+  const SILENCE_THRESHOLD = 0.015; // Slightly higher threshold to avoid background noise
   const SILENCE_DURATION = 2000; // 2 seconds of silence to stop recording
   const MAX_RECORDING_TIME = 30000; // 30 seconds max recording time
   const AUDIO_DETECTION_DELAY = 500; // 500ms delay before considering audio detected
@@ -73,21 +77,19 @@ document.addEventListener('DOMContentLoaded', () => {
     javascriptNode.connect(audioContext.destination);
   }
   
-  // Start recording
-  async function startRecording() {
+  // Start listening for audio
+  async function startListening() {
     try {
       // Reset variables
-      audioChunks = [];
-      isRecording = true;
-      isAudioDetected = false;
+      isListening = true;
       
       // Update UI
       recordButton.classList.add('active');
-      recordButton.querySelector('.btn-text').textContent = 'Stop Recording';
-      recordingStatus.textContent = 'Listening...';
+      recordButton.querySelector('.btn-text').textContent = 'Stop Listening';
+      recordingStatus.textContent = 'Listening for speech...';
       
       // Get audio stream
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      audioStream = await navigator.mediaDevices.getUserMedia({ audio: true });
       
       // Setup audio context if not already initialized
       if (!audioContext) {
@@ -95,15 +97,66 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       
       // Connect microphone to analyser
-      microphone = audioContext.createMediaStreamSource(stream);
+      microphone = audioContext.createMediaStreamSource(audioStream);
       microphone.connect(analyser);
       analyser.connect(javascriptNode);
       
       // Setup audio level detection
       javascriptNode.onaudioprocess = processAudio;
       
-      // Create media recorder
-      mediaRecorder = new MediaRecorder(stream);
+    } catch (error) {
+      console.error('Error starting audio listening:', error);
+      recordingStatus.textContent = 'Error: Could not access microphone';
+      stopListening();
+    }
+  }
+  
+  // Stop listening for audio
+  function stopListening() {
+    // If currently recording, stop that first
+    if (isRecording) {
+      stopRecording();
+    }
+    
+    // Clear all timeouts
+    clearTimeout(silenceTimer);
+    clearTimeout(audioDetectionTimeout);
+    clearTimeout(recordingTimeout);
+    
+    // Update state and UI
+    isListening = false;
+    recordButton.classList.remove('active');
+    recordButton.querySelector('.btn-text').textContent = 'Start Listening';
+    recordingStatus.textContent = 'Ready';
+    
+    // Disconnect audio processing
+    if (microphone) {
+      microphone.disconnect();
+      analyser.disconnect();
+      javascriptNode.disconnect();
+    }
+    
+    // Stop the audio stream
+    if (audioStream) {
+      audioStream.getTracks().forEach(track => track.stop());
+    }
+  }
+  
+  // Start recording
+  function startRecording() {
+    // Only start recording if we're in listening mode
+    if (!isListening) return;
+    
+    // Reset recording variables
+    audioChunks = [];
+    isRecording = true;
+    
+    // Update UI
+    recordingStatus.textContent = 'Recording...';
+    
+    try {
+      // Create media recorder from the existing stream
+      mediaRecorder = new MediaRecorder(audioStream);
       
       // Collect audio chunks
       mediaRecorder.ondataavailable = (event) => {
@@ -114,13 +167,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Handle recording stop
       mediaRecorder.onstop = () => {
-        // Disconnect audio processing
-        if (microphone) {
-          microphone.disconnect();
-          analyser.disconnect();
-          javascriptNode.disconnect();
-        }
-        
         // Process recorded audio
         processRecordedAudio();
       };
@@ -137,7 +183,8 @@ document.addEventListener('DOMContentLoaded', () => {
       
     } catch (error) {
       console.error('Error starting recording:', error);
-      recordingStatus.textContent = 'Error: Could not access microphone';
+      recordingStatus.textContent = 'Error: Could not start recording';
+      isRecording = false;
     }
   }
   
@@ -158,26 +205,30 @@ document.addEventListener('DOMContentLoaded', () => {
     // Update audio meter
     audioMeter.style.width = `${average * 100}%`;
     
-    // Audio detection logic
-    if (average > SILENCE_THRESHOLD) {
-      // Audio detected
-      if (!isAudioDetected) {
-        clearTimeout(audioDetectionTimeout);
-        audioDetectionTimeout = setTimeout(() => {
-          isAudioDetected = true;
-          recordingStatus.textContent = 'Recording...';
-        }, AUDIO_DETECTION_DELAY);
-      }
-      
-      // Reset silence timer
-      clearTimeout(silenceTimer);
-      
-      // Set new silence timer
-      silenceTimer = setTimeout(() => {
-        if (isRecording && isAudioDetected) {
-          stopRecording();
+    // Audio detection logic - only if we're listening but not yet recording
+    if (isListening) {
+      if (average > SILENCE_THRESHOLD) {
+        // Audio detected
+        if (!isRecording && !isAudioDetected) {
+          // Start a short delay before actually starting recording
+          clearTimeout(audioDetectionTimeout);
+          audioDetectionTimeout = setTimeout(() => {
+            isAudioDetected = true;
+            speechStartTime = new Date().getTime();
+            startRecording();
+          }, AUDIO_DETECTION_DELAY);
+        } else if (isRecording) {
+          // Reset silence timer if we're already recording
+          clearTimeout(silenceTimer);
+          
+          // Set new silence timer
+          silenceTimer = setTimeout(() => {
+            if (isRecording) {
+              stopRecording();
+            }
+          }, SILENCE_DURATION);
         }
-      }, SILENCE_DURATION);
+      }
     }
   }
   
@@ -190,20 +241,50 @@ document.addEventListener('DOMContentLoaded', () => {
     clearTimeout(audioDetectionTimeout);
     clearTimeout(recordingTimeout);
     
+    // Check if the speech duration was long enough
+    const currentTime = new Date().getTime();
+    const speechDuration = currentTime - speechStartTime;
+    
     // Update state and UI
     isRecording = false;
-    recordButton.classList.remove('active');
-    recordButton.querySelector('.btn-text').textContent = 'Start Recording';
+    isAudioDetected = false;
+    
+    if (speechDuration < minSpeechDuration) {
+      // Speech was too short, discard it
+      mediaRecorder.stop();
+      audioChunks = []; // Clear the chunks
+      
+      recordingStatus.textContent = 'Speech too short';
+      
+      // Go back to listening mode after a short delay
+      if (isListening) {
+        setTimeout(() => {
+          recordingStatus.textContent = 'Listening for speech...';
+        }, 1500);
+      }
+      return;
+    }
+    
     recordingStatus.textContent = 'Processing audio...';
     
     // Stop media recorder
     mediaRecorder.stop();
+    
+    // Go back to listening mode
+    if (isListening) {
+      recordingStatus.textContent = 'Listening for speech...';
+    }
   }
   
   // Process recorded audio
   async function processRecordedAudio() {
     if (audioChunks.length === 0) {
       recordingStatus.textContent = 'No audio detected';
+      if (isListening) {
+        setTimeout(() => {
+          recordingStatus.textContent = 'Listening for speech...';
+        }, 2000);
+      }
       return;
     }
     
@@ -237,6 +318,17 @@ document.addEventListener('DOMContentLoaded', () => {
       
       const data = await response.json();
       
+      // If no speech was detected, don't add messages to the conversation
+      if (data.transcription === '' && data.response === 'No speech detected.') {
+        recordingStatus.textContent = 'No speech detected';
+        if (isListening) {
+          setTimeout(() => {
+            recordingStatus.textContent = 'Listening for speech...';
+          }, 2000);
+        }
+        return;
+      }
+      
       // Update conversation with transcription
       addMessageToConversation('You', data.transcription, 'user');
       
@@ -255,7 +347,11 @@ document.addEventListener('DOMContentLoaded', () => {
       }
       
       // Update status
-      recordingStatus.textContent = 'Ready to record';
+      if (isListening) {
+        recordingStatus.textContent = 'Listening for speech...';
+      } else {
+        recordingStatus.textContent = 'Ready';
+      }
       
       // Visualize the recorded audio
       const audioUrl = URL.createObjectURL(audioBlob);
@@ -270,6 +366,13 @@ document.addEventListener('DOMContentLoaded', () => {
       // Emit error event to socket if available
       if (socket) {
         socket.emit('transcribing', { status: 'error', error: error.message });
+      }
+      
+      // Go back to listening mode after a delay
+      if (isListening) {
+        setTimeout(() => {
+          recordingStatus.textContent = 'Listening for speech...';
+        }, 3000);
       }
     }
   }
@@ -297,13 +400,13 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Event listeners
   recordButton.addEventListener('click', () => {
-    if (isRecording) {
-      stopRecording();
+    if (isListening) {
+      stopListening();
     } else {
-      startRecording();
+      startListening();
     }
   });
   
   // Initialize
-  recordingStatus.textContent = 'Ready to record';
+  recordingStatus.textContent = 'Ready';
 });
