@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Audio Transcription App</title>
+  <link rel="stylesheet" href="styles.css">
+  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap" rel="stylesheet">
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>Audio Conversation Assistant</h1>
+      <p>Speak, transcribe, and get responses in real-time</p>
+    </header>
+
+    <main>
+      <div class="audio-controls">
+        <button id="recordButton" class="btn record">
+          <span class="btn-icon">🎤</span>
+          <span class="btn-text">Start Recording</span>
+        </button>
+        <div id="recordingStatus" class="status">Ready to record</div>
+      </div>
+
+      <div class="visualization-container">
+        <div id="waveform"></div>
+        <div class="audio-levels">
+          <div id="audioMeter" class="meter"></div>
+        </div>
+      </div>
+
+      <div class="conversation-container">
+        <div class="conversation-header">
+          <h2>Conversation</h2>
+        </div>
+        <div id="conversation" class="conversation-content">
+          <!-- Conversation messages will be added here dynamically -->
+        </div>
+      </div>
+    </main>
+
+    <footer>
+      <p>Powered by Whisper and Piper TTS</p>
+    </footer>
+  </div>
+
+  <!-- Scripts -->
+  <script src="https://unpkg.com/wavesurfer.js@4.6.0/dist/wavesurfer.min.js"></script>
+  <script src="https://cdn.socket.io/4.8.1/socket.io.min.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
